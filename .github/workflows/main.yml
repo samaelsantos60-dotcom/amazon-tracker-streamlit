@@ -35,3 +35,6 @@ jobs:
           git add -f amazon_tracker.db
           git commit -m "Atualização automática da base de dados [skip ci]" || exit 0
           git push
+from alerts import send_alert
+
+send_alert("🤖 <b>Teste:</b> O bot do Telegram está a funcionar perfeitamente!")
