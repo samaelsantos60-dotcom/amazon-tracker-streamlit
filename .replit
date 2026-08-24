@@ -1,0 +1,19 @@
+run = "./start.sh"
+
+modules = ["python-3.11"]
+
+[nix]
+channel = "stable-25_05"
+packages = ["glibcLocales"]
+
+[[ports]]
+localPort = 8501
+externalPort = 80
+
+[[workflows.workflow]]
+name = "Amazon Tracker + Dashboard"
+mode = "parallel"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "./start.sh"
