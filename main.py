@@ -42,7 +42,7 @@ def save_product_data(asin, title, price, bsr):
     conn.commit()
     conn.close()
 
-def scrape_bestsellers_category(category_url, limit=5):
+def scrape_bestsellers_category(category_url, limit=10):
     """Faz o scraping da página de Mais Vendidos de uma categoria."""
     try:
         response = requests.get(category_url, headers=HEADERS, timeout=15)
@@ -53,11 +53,9 @@ def scrape_bestsellers_category(category_url, limit=5):
         soup = BeautifulSoup(response.content, "html.parser")
         products = []
         
-        # Encontra os cartões de produtos da lista de mais vendidos
         cards = soup.find_all("div", {"id": re.compile(r"^gridItemRoot")})
 
         for rank, card in enumerate(cards[:limit], start=1):
-            # Extração do Título e Link
             title_elem = card.find("span", {"class": re.compile(r"_cDEbf_title_")}) or card.find("div", {"class": "p13n-sc-css-line-clamp-1"})
             title = title_elem.get_text(strip=True) if title_elem else "Produto sem título"
 
@@ -65,11 +63,9 @@ def scrape_bestsellers_category(category_url, limit=5):
             href = link_elem["href"] if link_elem else ""
             url = f"https://www.amazon.es{href}" if href.startswith("/") else href
 
-            # Extração do ASIN através do link
             asin_match = re.search(r"/(?:dp|product-reviews)/([A-Z0-9]{10})", url)
             asin = asin_match.group(1) if asin_match else "N/D"
 
-            # Extração do Preço
             price = None
             price_elem = card.find("span", {"class": "_cDEbf_price_11U0m"}) or card.find("span", {"class": "a-color-price"})
             if price_elem:
@@ -95,23 +91,21 @@ def scrape_bestsellers_category(category_url, limit=5):
 def main():
     init_db()
 
-    # URL da categoria de Mais Vendidos da Amazon ES (Exemplo: Eletrónica / Tecnologia)
-    # Podes alterar a URL para qualquer outra categoria da Amazon ES!
+    # URL da categoria
     CATEGORY_URL = "https://www.amazon.es/gp/bestsellers/electronics/"
     
-    print("🔍 A recolher a lista dos mais vendidos...")
-    top_products = scrape_bestsellers_category(CATEGORY_URL, limit=5)
+    print("🔍 A recolher o Top 10 dos mais vendidos...")
+    # Alterado o limite para 10 produtos
+    top_products = scrape_bestsellers_category(CATEGORY_URL, limit=10)
 
     if not top_products:
         print("⚠️ Nenhum produto encontrado.")
         return
 
-    # Guarda na base de dados
     for prod in top_products:
         save_product_data(prod["asin"], prod["title"], prod["price"], prod["rank"])
 
-    # Monta o relatório para o Telegram
-    msg = "🔥 <b>TOP MAIS VENDEDOS DA AMAZON</b>\n"
+    msg = "🔥 <b>TOP 10 MAIS VENDIDOS DA AMAZON</b>\n"
     msg += "━━━━━━━━━━━━━━━━━━━\n\n"
 
     for item in top_products:
