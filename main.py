@@ -5,8 +5,6 @@ import requests
 from bs4 import BeautifulSoup
 
 DB_NAME = "amazon_tracker.db"
-
-# Obtém a tua tag de afiliado das Secrets ou usa a tua tag padrão (ex: 'seuid-21')
 AFFILIATE_TAG = os.environ.get("AMAZON_ASSOCIATE_TAG", "SEU_TAG_AQUI-21")
 
 HEADERS = {
@@ -18,21 +16,42 @@ HEADERS = {
     "Accept-Language": "es-ES,es;q=0.9,en;q=0.8,pt;q=0.7",
 }
 
-def send_alert(message):
+def send_telegram_card(title, price, asin, url, rank):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
-        print("[ERRO] TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID não definidos.")
+        print("[ERRO] Variáveis do Telegram não configuradas.")
         return
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    preco_str = f"{price}€" if price else "Ver no site"
+
+    # Mensagem formatada individual
+    text = (
+        f"🔥 <b>OFERTA #{rank} DA AMAZON</b> 🔥\n\n"
+        f"📦 <b>{title}</b>\n\n"
+        f"💰 <b>Preço:</b> {preco_str}\n"
+        f"🆔 <b>ASIN:</b> <code>{asin}</code>\n"
+    )
+
+    # Botão Inline de Link Direto
+    reply_markup = {
+        "inline_keyboard": [
+            [
+                {"text": "🛒 VER OFERTA NA AMAZON", "url": url}
+            ]
+        ]
+    }
+
+    api_url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         "chat_id": chat_id,
-        "text": message,
+        "text": text,
         "parse_mode": "HTML",
-        "disable_web_page_preview": True
+        "reply_markup": reply_markup,
+        "disable_web_page_preview": False
     }
-    requests.post(url, json=payload)
+    
+    requests.post(api_url, json=payload)
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -60,11 +79,10 @@ def save_product_data(asin, title, price, bsr):
     conn.commit()
     conn.close()
 
-def scrape_bestsellers_category(category_url, limit=10):
+def scrape_bestsellers_category(category_url, limit=5):
     try:
         response = requests.get(category_url, headers=HEADERS, timeout=15)
         if response.status_code != 200:
-            print(f"[ERRO] Status {response.status_code} ao aceder à categoria.")
             return []
 
         soup = BeautifulSoup(response.content, "html.parser")
@@ -73,7 +91,7 @@ def scrape_bestsellers_category(category_url, limit=10):
 
         for rank, card in enumerate(cards[:limit], start=1):
             title_elem = card.find("span", {"class": re.compile(r"_cDEbf_title_")}) or card.find("div", {"class": "p13n-sc-css-line-clamp-1"})
-            title = title_elem.get_text(strip=True) if title_elem else "Produto sem título"
+            title = title_elem.get_text(strip=True) if title_elem else "Produto Amazon"
 
             link_elem = card.find("a", {"class": "a-link-normal"})
             href = link_elem["href"] if link_elem else ""
@@ -82,11 +100,7 @@ def scrape_bestsellers_category(category_url, limit=10):
             asin_match = re.search(r"/(?:dp|product-reviews)/([A-Z0-9]{10})", clean_url)
             asin = asin_match.group(1) if asin_match else "N/D"
 
-            # Constrói o link com a tag de afiliado
-            if asin != "N/D":
-                affiliate_url = f"https://www.amazon.es/dp/{asin}?tag={AFFILIATE_TAG}"
-            else:
-                affiliate_url = f"{clean_url}?tag={AFFILIATE_TAG}" if "?" not in clean_url else f"{clean_url}&tag={AFFILIATE_TAG}"
+            affiliate_url = f"https://www.amazon.es/dp/{asin}?tag={AFFILIATE_TAG}" if asin != "N/D" else clean_url
 
             price = None
             price_elem = card.find("span", {"class": "_cDEbf_price_11U0m"}) or card.find("span", {"class": "a-color-price"})
@@ -99,7 +113,7 @@ def scrape_bestsellers_category(category_url, limit=10):
             products.append({
                 "rank": rank,
                 "asin": asin,
-                "title": title[:45] + "..." if len(title) > 45 else title,
+                "title": title,
                 "price": price,
                 "url": affiliate_url
             })
@@ -107,37 +121,27 @@ def scrape_bestsellers_category(category_url, limit=10):
         return products
 
     except Exception as e:
-        print(f"[ERRO] Exceção no scraping: {e}")
+        print(f"[ERRO] Exceção: {e}")
         return []
 
 def main():
     init_db()
-
     CATEGORY_URL = "https://www.amazon.es/gp/bestsellers/electronics/"
-    print("🔍 A recolher o Top 10 com links de Afiliado...")
-    top_products = scrape_bestsellers_category(CATEGORY_URL, limit=10)
+    
+    print("🔍 A recolher produtos para enviar cartões com botão...")
+    products = scrape_bestsellers_category(CATEGORY_URL, limit=5)
 
-    if not top_products:
-        print("⚠️ Nenhum produto encontrado.")
-        return
-
-    for prod in top_products:
+    for prod in products:
         save_product_data(prod["asin"], prod["title"], prod["price"], prod["rank"])
+        send_telegram_card(
+            title=prod["title"],
+            price=prod["price"],
+            asin=prod["asin"],
+            url=prod["url"],
+            rank=prod["rank"]
+        )
 
-    msg = "🔥 <b>TOP 10 MAIS VENDIDOS DA AMAZON</b>\n"
-    msg += "━━━━━━━━━━━━━━━━━━━\n\n"
-
-    for item in top_products:
-        preco_str = f"{item['price']}€" if item['price'] else "Indisponível"
-        msg += f"<b>#{item['rank']} <a href='{item['url']}'>{item['title']}</a></b>\n"
-        msg += f"💰 <b>Preço:</b> {preco_str}\n"
-        msg += f"🆔 <b>ASIN:</b> <code>{item['asin']}</code>\n\n"
-
-    msg += "━━━━━━━━━━━━━━━━━━━\n"
-    msg += "⚡ <i>Relatório automático enviado via GitHub Actions.</i>"
-
-    send_alert(msg)
-    print("✅ Processo concluído com sucesso!")
+    print("✅ Cartões com botões enviados para o Telegram!")
 
 if __name__ == "__main__":
     main()
