@@ -6,6 +6,9 @@ from bs4 import BeautifulSoup
 
 DB_NAME = "amazon_tracker.db"
 
+# Obtém a tua tag de afiliado das Secrets ou usa a tua tag padrão (ex: 'seuid-21')
+AFFILIATE_TAG = os.environ.get("AMAZON_ASSOCIATE_TAG", "SEU_TAG_AQUI-21")
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -74,10 +77,16 @@ def scrape_bestsellers_category(category_url, limit=10):
 
             link_elem = card.find("a", {"class": "a-link-normal"})
             href = link_elem["href"] if link_elem else ""
-            url = f"https://www.amazon.es{href}" if href.startswith("/") else href
+            clean_url = f"https://www.amazon.es{href}" if href.startswith("/") else href
 
-            asin_match = re.search(r"/(?:dp|product-reviews)/([A-Z0-9]{10})", url)
+            asin_match = re.search(r"/(?:dp|product-reviews)/([A-Z0-9]{10})", clean_url)
             asin = asin_match.group(1) if asin_match else "N/D"
+
+            # Constrói o link com a tag de afiliado
+            if asin != "N/D":
+                affiliate_url = f"https://www.amazon.es/dp/{asin}?tag={AFFILIATE_TAG}"
+            else:
+                affiliate_url = f"{clean_url}?tag={AFFILIATE_TAG}" if "?" not in clean_url else f"{clean_url}&tag={AFFILIATE_TAG}"
 
             price = None
             price_elem = card.find("span", {"class": "_cDEbf_price_11U0m"}) or card.find("span", {"class": "a-color-price"})
@@ -92,7 +101,7 @@ def scrape_bestsellers_category(category_url, limit=10):
                 "asin": asin,
                 "title": title[:45] + "..." if len(title) > 45 else title,
                 "price": price,
-                "url": url
+                "url": affiliate_url
             })
 
         return products
@@ -105,7 +114,7 @@ def main():
     init_db()
 
     CATEGORY_URL = "https://www.amazon.es/gp/bestsellers/electronics/"
-    print("🔍 A recolher o Top 10...")
+    print("🔍 A recolher o Top 10 com links de Afiliado...")
     top_products = scrape_bestsellers_category(CATEGORY_URL, limit=10)
 
     if not top_products:
