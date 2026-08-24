@@ -1,127 +1,131 @@
-"""Monitor de métricas de produtos Amazon Espanha para GitHub Actions."""
+import os
+import re
+import sqlite3
+import requests
+from bs4 import BeautifulSoup
+from alerts import send_alert
 
-import argparse
-from datetime import date, datetime
+DB_NAME = "amazon_tracker.db"
 
-from alerts import build_alert_message, send_alert
-from database import (
-    add_monitored_products,
-    get_monitored_asins,
-    get_previous_metric,
-    init_db,
-    save_metrics,
-)
-from keepa_api import fetch_products
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "es-ES,es;q=0.9,en;q=0.8,pt;q=0.7",
+}
 
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asin TEXT NOT NULL,
+            title TEXT,
+            price REAL,
+            bsr INTEGER,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
 
-ASINS = [
-    "B08N5WRWNW",
-]
+def save_product_data(asin, title, price, bsr):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO products (asin, title, price, bsr)
+        VALUES (?, ?, ?, ?)
+    ''', (asin, title, price, bsr))
+    conn.commit()
+    conn.close()
 
-
-def test_keepa_connection() -> int:
-    """Testa a API (ou confirma explicitamente o modo de dados simulados)."""
-    print("[TESTE] A verificar a ligação ao Keepa para a Amazon.es...")
+def scrape_amazon_product(asin):
+    url = f"https://www.amazon.es/dp/{asin}"
     try:
-        metrics = fetch_products([ASINS[0]])
-        if metrics and metrics[0]["title"].startswith("Produto Amazon de teste"):
-            print("[TESTE] OK: KEEPA_API_KEY não definida; dados de teste ativos.")
-        else:
-            print(
-                f"[TESTE] OK: API Keepa respondeu com {len(metrics)} produto(s) "
-                "(domain=9, Amazon.es)."
-            )
-        return 0
-    except Exception as error:
-        print(f"[TESTE] ERRO: não foi possível obter resposta do Keepa: {error}")
-        return 1
+        response = requests.get(url, headers=HEADERS, timeout=15)
+        if response.status_code != 200:
+            return None
 
+        soup = BeautifulSoup(response.content, "html.parser")
 
-def collect_metrics() -> None:
-    started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n[INÍCIO] Recolha iniciada em {started_at}")
-    print(f"[INFO] ASINs configurados: {len(ASINS)}")
+        # Título
+        title_element = soup.find("span", {"id": "productTitle"})
+        title = title_element.get_text(strip=True) if title_element else "Sem Título"
 
-    try:
-        monitored_asins = get_monitored_asins() or ASINS
-        print(f"[INFO] ASINs em monitorização: {len(monitored_asins)}")
-        metrics = fetch_products(monitored_asins)
-        print(f"[INFO] Métricas recebidas: {len(metrics)}")
-        saved = save_metrics(metrics)
-        today = date.today().isoformat()
-        for metric in metrics:
-            print(
-                f"[PRODUTO] {metric['asin']} | {metric['title']} | "
-                f"BSR={metric.get('bsr')} | preço={metric.get('price')}€ | "
-                f"vendedores={metric.get('sellers')} | rating={metric.get('rating')} | "
-                f"avaliações={metric.get('review_count')}"
-            )
-            previous = get_previous_metric(metric["asin"], today)
-            reasons = []
-            if previous:
-                old_bsr, new_bsr = previous.get("bsr"), metric.get("bsr")
-                if (
-                    isinstance(old_bsr, (int, float))
-                    and old_bsr > 0
-                    and isinstance(new_bsr, (int, float))
-                    and (old_bsr - new_bsr) / old_bsr > 0.20
-                ):
-                    reasons.append(
-                        f"Oportunidade de Vendas — BSR melhorou "
-                        f"{((old_bsr - new_bsr) / old_bsr) * 100:.1f}% "
-                        f"({old_bsr} → {new_bsr})"
-                    )
+        # Preço
+        price = None
+        price_element = soup.find("span", {"class": "a-offscreen"})
+        if price_element:
+            price_text = price_element.get_text().replace(",", ".").replace("€", "").strip()
+            match = re.search(r"(\d+\.?\d*)", price_text)
+            if match:
+                price = float(match.group(1))
 
-                old_price, new_price = previous.get("price"), metric.get("price")
-                if (
-                    isinstance(old_price, (int, float))
-                    and old_price > 0
-                    and isinstance(new_price, (int, float))
-                    and (old_price - new_price) / old_price > 0.10
-                ):
-                    reasons.append(
-                        f"Queda de Preço/Guerra de Buy Box — preço caiu "
-                        f"{((old_price - new_price) / old_price) * 100:.1f}% "
-                        f"({old_price:.2f}€ → {new_price:.2f}€)"
-                    )
+        # Best Sellers Rank (BSR)
+        bsr = 999999
+        text_content = soup.get_text()
+        bsr_match = re.search(r"Nº\s*([\d\.]+)\s*en", text_content, re.IGNORECASE)
+        if bsr_match:
+            bsr = int(bsr_match.group(1).replace(".", ""))
 
-            if reasons:
-                print(f"[ALERTA] Condição atingida para {metric['asin']}.")
-                send_alert(build_alert_message(metric, reasons))
-            elif previous:
-                print(f"[ALERTAS] Sem alterações relevantes para {metric['asin']}.")
-            else:
-                print(f"[ALERTAS] Sem histórico de ontem para {metric['asin']}.")
-        print(f"[SUCESSO] {saved} registo(s) guardado(s) na base de dados SQLite.")
-    except Exception as error:
-        print(f"[ERRO] A recolha falhou: {error}")
-    finally:
-        print(f"[FIM] Recolha terminada em {datetime.now():%Y-%m-%d %H:%M:%S}")
+        return {
+            "asin": asin,
+            "title": title[:40] + "..." if len(title) > 40 else title,
+            "price": price,
+            "bsr": bsr,
+            "url": url
+        }
+    except Exception as e:
+        print(f"Erro no ASIN {asin}: {e}")
+        return None
 
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Monitor de métricas Amazon.es")
-    parser.add_argument(
-        "--test-keepa",
-        action="store_true",
-        help="testa a ligação ao Keepa e termina",
-    )
-    args = parser.parse_args()
-
-    if args.test_keepa:
-        raise SystemExit(test_keepa_connection())
-
-    print("[ARRANQUE] Monitor de métricas Amazon.es")
+def main():
     init_db()
-    print("[BASE DE DADOS] SQLite inicializada.")
-    add_monitored_products(
-        [{"asin": asin, "title": "Produto inicial"} for asin in ASINS]
-    )
 
-    print("[ARRANQUE] A executar recolha de dados...")
-    collect_metrics()
-    print("[CONCLUÍDO] Execução finalizada com sucesso.")
+    # Adiciona os ASINs que queres monitorizar
+    asins = [
+        "B08N5WRWNW", 
+        "B09B234C3S", 
+        "B07PFFMP9P"  
+    ]
 
+    results = []
+    print("🔍 A extrair dados dos produtos...")
+
+    for asin in asins:
+        data = scrape_amazon_product(asin)
+        if data:
+            save_product_data(data["asin"], data["title"], data["price"], data["bsr"])
+            results.append(data)
+
+    if not results:
+        print("Nenhum dado recolhido.")
+        return
+
+    # Ordena os produtos do MAIS VENDIDO (menor BSR) para o menos vendido
+    results.sort(key=lambda x: x["bsr"])
+
+    # MONTAGEM DO RELATÓRIO
+    msg = "📊 <b>RELATÓRIO DE MONITORIZAÇÃO AMAZON</b>\n"
+    msg += "━━━━━━━━━━━━━━━━━━━\n\n"
+    msg += "🔥 <b>PRODUTOS MAIS VENDIDOS / PROCURADOS:</b>\n\n"
+
+    for idx, item in enumerate(results, start=1):
+        preco_str = f"{item['price']}€" if item['price'] else "Indisponível"
+        bsr_str = f"#{item['bsr']:,}".replace(",", ".") if item['bsr'] != 999999 else "N/D"
+
+        msg += f"<b>{idx}. <a href='{item['url']}'>{item['title']}</a></b>\n"
+        msg += f"🏆 <b>Ranking (BSR):</b> {bsr_str}\n"
+        msg += f"💰 <b>Preço Atual:</b> {preco_str}\n"
+        msg += f"🆔 <b>ASIN:</b> <code>{item['asin']}</code>\n\n"
+
+    msg += "━━━━━━━━━━━━━━━━━━━\n"
+    msg += "💡 <i>Quanto menor o número do BSR, mais unidades o produto está a vender!</i>"
+
+    send_alert(msg)
 
 if __name__ == "__main__":
     main()
