@@ -264,3 +264,30 @@ def main():
         novos_enviados += 1
 
     print(f"✅ Processo concluído! {novos_enviados} novos produtos enviados.")
+from openai import OpenAI
+
+def generate_ai_caption(title, price, old_price):
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None # Caso não haja chave, usa o formato padrão
+
+    try:
+        client = OpenAI(api_key=api_key)
+        prompt = (
+            f"Cria um post curto e persuasivo para o Telegram a divulgar este produto em promoção na Amazon:\n"
+            f"Produto: {title}\n"
+            f"Preço: {price}€\n"
+            f"Preço Antigo: {old_price}€\n\n"
+            f"Instruções: Usa emojis atrativos, destaca a poupança e inclui frases apelativas de compra rápida. "
+            f"Não inclua links na resposta, foca-te apenas no texto curto e organizado em tópicos."
+        )
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"[Aviso IA] Não foi possível gerar legenda com IA: {e}")
+        return None
