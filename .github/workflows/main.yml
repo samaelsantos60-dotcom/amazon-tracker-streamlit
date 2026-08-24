@@ -1,40 +1,30 @@
 name: Executar Amazon Tracker
 
 on:
+  workflow_dispatch: # Permite rodar manualmente
   schedule:
-    - cron: '0 */6 * * *' # Corre automaticamente a cada 6 horas
-  workflow_dispatch: # Permite executar manualmente no GitHub
-
-permissions:
-  contents: write
+    # Roda todos os dias às 10:00 UTC (11:00 no horário de Portugal)
+    - cron: '0 10 * * *'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout do código
-        uses: actions/checkout@v3
-
+      - uses: actions/checkout@v3
+      
       - name: Configurar Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
+          
       - name: Instalar Dependências
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install requests openai
 
-      - name: Executar Recolha de Dados
+      - name: Executar Bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python main.py
-
-      - name: Guardar Base de Dados no Repositório
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add -f amazon_tracker.db
-          git commit -m "Atualização automática da base de dados [skip ci]" || exit 0
-          git push
