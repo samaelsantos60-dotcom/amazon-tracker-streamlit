@@ -42,88 +42,86 @@ def save_product_data(asin, title, price, bsr):
     conn.commit()
     conn.close()
 
-def scrape_amazon_product(asin):
-    url = f"https://www.amazon.es/dp/{asin}"
+def scrape_bestsellers_category(category_url, limit=5):
+    """Faz o scraping da página de Mais Vendidos de uma categoria."""
     try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
+        response = requests.get(category_url, headers=HEADERS, timeout=15)
         if response.status_code != 200:
-            return None
+            print(f"[ERRO] Status {response.status_code} ao aceder à categoria.")
+            return []
 
         soup = BeautifulSoup(response.content, "html.parser")
+        products = []
+        
+        # Encontra os cartões de produtos da lista de mais vendidos
+        cards = soup.find_all("div", {"id": re.compile(r"^gridItemRoot")})
 
-        # Título
-        title_element = soup.find("span", {"id": "productTitle"})
-        title = title_element.get_text(strip=True) if title_element else "Sem Título"
+        for rank, card in enumerate(cards[:limit], start=1):
+            # Extração do Título e Link
+            title_elem = card.find("span", {"class": re.compile(r"_cDEbf_title_")}) or card.find("div", {"class": "p13n-sc-css-line-clamp-1"})
+            title = title_elem.get_text(strip=True) if title_elem else "Produto sem título"
 
-        # Preço
-        price = None
-        price_element = soup.find("span", {"class": "a-offscreen"})
-        if price_element:
-            price_text = price_element.get_text().replace(",", ".").replace("€", "").strip()
-            match = re.search(r"(\d+\.?\d*)", price_text)
-            if match:
-                price = float(match.group(1))
+            link_elem = card.find("a", {"class": "a-link-normal"})
+            href = link_elem["href"] if link_elem else ""
+            url = f"https://www.amazon.es{href}" if href.startswith("/") else href
 
-        # Best Sellers Rank (BSR)
-        bsr = 999999
-        text_content = soup.get_text()
-        bsr_match = re.search(r"Nº\s*([\d\.]+)\s*en", text_content, re.IGNORECASE)
-        if bsr_match:
-            bsr = int(bsr_match.group(1).replace(".", ""))
+            # Extração do ASIN através do link
+            asin_match = re.search(r"/(?:dp|product-reviews)/([A-Z0-9]{10})", url)
+            asin = asin_match.group(1) if asin_match else "N/D"
 
-        return {
-            "asin": asin,
-            "title": title[:40] + "..." if len(title) > 40 else title,
-            "price": price,
-            "bsr": bsr,
-            "url": url
-        }
+            # Extração do Preço
+            price = None
+            price_elem = card.find("span", {"class": "_cDEbf_price_11U0m"}) or card.find("span", {"class": "a-color-price"})
+            if price_elem:
+                price_text = price_elem.get_text().replace(",", ".").replace("€", "").strip()
+                match = re.search(r"(\d+\.?\d*)", price_text)
+                if match:
+                    price = float(match.group(1))
+
+            products.append({
+                "rank": rank,
+                "asin": asin,
+                "title": title[:45] + "..." if len(title) > 45 else title,
+                "price": price,
+                "url": url
+            })
+
+        return products
+
     except Exception as e:
-        print(f"Erro no ASIN {asin}: {e}")
-        return None
+        print(f"[ERRO] Exceção no scraping da categoria: {e}")
+        return []
 
 def main():
     init_db()
 
-    # Adiciona os ASINs que queres monitorizar
-    asins = [
-        "B08N5WRWNW", 
-        "B09B234C3S", 
-        "B07PFFMP9P"  
-    ]
+    # URL da categoria de Mais Vendidos da Amazon ES (Exemplo: Eletrónica / Tecnologia)
+    # Podes alterar a URL para qualquer outra categoria da Amazon ES!
+    CATEGORY_URL = "https://www.amazon.es/gp/bestsellers/electronics/"
+    
+    print("🔍 A recolher a lista dos mais vendidos...")
+    top_products = scrape_bestsellers_category(CATEGORY_URL, limit=5)
 
-    results = []
-    print("🔍 A extrair dados dos produtos...")
-
-    for asin in asins:
-        data = scrape_amazon_product(asin)
-        if data:
-            save_product_data(data["asin"], data["title"], data["price"], data["bsr"])
-            results.append(data)
-
-    if not results:
-        print("Nenhum dado recolhido.")
+    if not top_products:
+        print("⚠️ Nenhum produto encontrado.")
         return
 
-    # Ordena os produtos do MAIS VENDIDO (menor BSR) para o menos vendido
-    results.sort(key=lambda x: x["bsr"])
+    # Guarda na base de dados
+    for prod in top_products:
+        save_product_data(prod["asin"], prod["title"], prod["price"], prod["rank"])
 
-    # MONTAGEM DO RELATÓRIO
-    msg = "📊 <b>RELATÓRIO DE MONITORIZAÇÃO AMAZON</b>\n"
+    # Monta o relatório para o Telegram
+    msg = "🔥 <b>TOP MAIS VENDEDOS DA AMAZON</b>\n"
     msg += "━━━━━━━━━━━━━━━━━━━\n\n"
-    msg += "🔥 <b>PRODUTOS MAIS VENDIDOS / PROCURADOS:</b>\n\n"
 
-    for idx, item in enumerate(results, start=1):
+    for item in top_products:
         preco_str = f"{item['price']}€" if item['price'] else "Indisponível"
-        bsr_str = f"#{item['bsr']:,}".replace(",", ".") if item['bsr'] != 999999 else "N/D"
-
-        msg += f"<b>{idx}. <a href='{item['url']}'>{item['title']}</a></b>\n"
-        msg += f"🏆 <b>Ranking (BSR):</b> {bsr_str}\n"
-        msg += f"💰 <b>Preço Atual:</b> {preco_str}\n"
+        msg += f"<b>#{item['rank']} <a href='{item['url']}'>{item['title']}</a></b>\n"
+        msg += f"💰 <b>Preço:</b> {preco_str}\n"
         msg += f"🆔 <b>ASIN:</b> <code>{item['asin']}</code>\n\n"
 
     msg += "━━━━━━━━━━━━━━━━━━━\n"
-    msg += "💡 <i>Quanto menor o número do BSR, mais unidades o produto está a vender!</i>"
+    msg += "⚡ <i>Lista extraída diretamente da categoria de Mais Vendidos.</i>"
 
     send_alert(msg)
 
