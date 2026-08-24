@@ -29,6 +29,6 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add amazon_tracker.db
+          git add -f amazon_tracker.db
           git commit -m "Atualização automática da base de dados [skip ci]" || exit 0
           git push
