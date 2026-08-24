@@ -214,3 +214,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+from alerts import send_alert
+send_alert("🧪 Teste de Notificação: Se leres isto, o bot está a funcionar!")
