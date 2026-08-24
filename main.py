@@ -1,13 +1,7 @@
-"""Monitor diário de métricas de produtos Amazon Espanha."""
+"""Monitor de métricas de produtos Amazon Espanha para GitHub Actions."""
 
-import time
 import argparse
-import json
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import date, datetime
-from threading import Thread
-
-import schedule
 
 from alerts import build_alert_message, send_alert
 from database import (
@@ -17,39 +11,12 @@ from database import (
     init_db,
     save_metrics,
 )
-from discovery import run_discovery
 from keepa_api import fetch_products
 
 
 ASINS = [
     "B08N5WRWNW",
 ]
-HEALTHCHECK_PORT = 8502
-
-
-class HealthcheckHandler(BaseHTTPRequestHandler):
-    """Endpoint leve para confirmar que o processo do monitor está ativo."""
-
-    def do_GET(self) -> None:
-        if self.path != "/health":
-            self.send_error(404)
-            return
-        body = json.dumps({"status": "ok", "service": "amazon-tracker"}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format: str, *args: object) -> None:
-        return
-
-
-def start_healthcheck() -> None:
-    """Inicia o healthcheck local em background sem bloquear o monitor."""
-    server = ThreadingHTTPServer(("0.0.0.0", HEALTHCHECK_PORT), HealthcheckHandler)
-    Thread(target=server.serve_forever, daemon=True).start()
-    print(f"[HEALTHCHECK] Ativo em http://0.0.0.0:{HEALTHCHECK_PORT}/health")
 
 
 def test_keepa_connection() -> int:
@@ -137,7 +104,7 @@ def main() -> None:
     parser.add_argument(
         "--test-keepa",
         action="store_true",
-        help="testa a ligação ao Keepa e termina sem iniciar o agendamento",
+        help="testa a ligação ao Keepa e termina",
     )
     args = parser.parse_args()
 
@@ -147,28 +114,13 @@ def main() -> None:
     print("[ARRANQUE] Monitor de métricas Amazon.es")
     init_db()
     print("[BASE DE DADOS] SQLite inicializada.")
-    start_healthcheck()
-    # Persiste também o ASIN inicial para que a lista possa ser expandida.
     add_monitored_products(
         [{"asin": asin, "title": "Produto inicial"} for asin in ASINS]
     )
 
-    print("[ARRANQUE] A executar recolha imediata...")
+    print("[ARRANQUE] A executar recolha de dados...")
     collect_metrics()
-
-    schedule.every().day.at("08:00").do(collect_metrics)
-    schedule.every().monday.at("07:30").do(run_discovery)
-    print("[AGENDA] Próxima recolha automática agendada para as 08:00.")
-    print(
-        "[DISCOVERY] Descoberta semanal agendada para segunda-feira às 07:30."
-    )
-    print("[AGENDA] Monitor ativo. Prima Ctrl+C para terminar.")
-    try:
-        while True:
-            schedule.run_pending()
-            time.sleep(30)
-    except KeyboardInterrupt:
-        print("\n[PARAGEM] Monitor terminado pelo utilizador.")
+    print("[CONCLUÍDO] Execução finalizada com sucesso.")
 
 
 if __name__ == "__main__":
