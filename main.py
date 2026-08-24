@@ -1,13 +1,14 @@
 import os
 import re
+import datetime
 import sqlite3
 import requests
 from bs4 import BeautifulSoup
+from openai import OpenAI
 
 DB_NAME = "amazon_tracker.db"
 AFFILIATE_TAG = os.environ.get("AMAZON_ASSOCIATE_TAG", "SEU_TAG_AQUI-21")
 
-# User-Agent atualizado para evitar bloqueios simples da Amazon
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -16,6 +17,17 @@ HEADERS = {
     ),
     "Accept-Language": "es-ES,es;q=0.9,en;q=0.8,pt;q=0.7",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+}
+
+# Rotação de categorias por dia da semana
+CATEGORY_MAP = {
+    0: "https://www.amazon.es/gp/bestsellers/electronics/",        # Segunda
+    1: "https://www.amazon.es/gp/bestsellers/kitchen/",            # Terça
+    2: "https://www.amazon.es/gp/bestsellers/computers/",          # Quarta
+    3: "https://www.amazon.es/gp/bestsellers/home-goods/",         # Quinta
+    4: "https://www.amazon.es/gp/bestsellers/sports/",             # Sexta
+    5: "https://www.amazon.es/gp/bestsellers/toys/",               # Sábado
+    6: "https://www.amazon.es/gp/bestsellers/electronics/"         # Domingo
 }
 
 def init_db():
@@ -35,7 +47,7 @@ def init_db():
     conn.close()
 
 def was_sent_recently(asin, hours=0):
-    """Verifica se o produto (ASIN) foi enviado para o Telegram nas últimas X horas."""
+    """Muda para hours=24 em produção depois de testar!"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''
@@ -56,6 +68,32 @@ def save_product_data(asin, title, price, bsr):
     conn.commit()
     conn.close()
 
+def generate_ai_caption(title, price, old_price):
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    try:
+        client = OpenAI(api_key=api_key)
+        prompt = (
+            f"Cria um post curto e persuasivo para o Telegram a divulgar este produto em promoção na Amazon:\n"
+            f"Produto: {title}\n"
+            f"Preço: {price}€\n"
+            f"Preço Antigo: {old_price}€\n\n"
+            f"Instruções: Usa emojis atrativos, destaca a poupança e inclui frases apelativas de compra rápida. "
+            f"Não inclua links na resposta, foca-te apenas no texto curto e organizado em tópicos."
+        )
+        
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"[Aviso IA] Não foi possível gerar legenda com IA: {e}")
+        return None
+
 def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, image_url, rank):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
@@ -63,27 +101,32 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
         print("[ERRO] Variáveis do Telegram não configuradas.")
         return
 
-    preco_str = f"{price}€" if price else "Ver no site"
-    
-    preco_bloco = f"💰 <b>Preço:</b> {preco_str}\n"
-    if old_price and price and old_price > price:
-        desconto = int(((old_price - price) / old_price) * 100)
-        preco_bloco = (
-            f"💰 <b>Preço Promoção:</b> {preco_str} "
-            f"<s>({old_price}€)</s> 🔥 <b>-{desconto}%</b>\n"
+    # Tenta usar a IA para gerar o texto da legenda
+    ai_caption = generate_ai_caption(title, price, old_price)
+
+    if ai_caption:
+        caption = f"🔥 <b>OFERTA DA AMAZON (#Top{rank})</b> 🔥\n\n{ai_caption}\n\n🆔 <b>ASIN:</b> <code>{asin}</code>"
+    else:
+        preco_str = f"{price}€" if price else "Ver no site"
+        preco_bloco = f"💰 <b>Preço:</b> {preco_str}\n"
+        if old_price and price and old_price > price:
+            desconto = int(((old_price - price) / old_price) * 100)
+            preco_bloco = (
+                f"💰 <b>Preço Promoção:</b> {preco_str} "
+                f"<s>({old_price}€)</s> 🔥 <b>-{desconto}%</b>\n"
+            )
+
+        cupao_bloco = ""
+        if coupon:
+            cupao_bloco = f"🎟️ <b>CUPÃO DISPONÍVEL:</b> <i>{coupon}</i>\n⚠️ <i>Marca a caixa do cupão na página do produto!</i>\n"
+
+        caption = (
+            f"🔥 <b>OFERTA DA AMAZON (#Top{rank})</b> 🔥\n\n"
+            f"📦 <b>{title}</b>\n\n"
+            f"{preco_bloco}"
+            f"{cupao_bloco}\n"
+            f"🆔 <b>ASIN:</b> <code>{asin}</code>\n"
         )
-
-    cupao_bloco = ""
-    if coupon:
-        cupao_bloco = f"🎟️ <b>CUPÃO DISPONÍVEL:</b> <i>{coupon}</i>\n⚠️ <i>Marca a caixa do cupão na página do produto!</i>\n"
-
-    caption = (
-        f"🔥 <b>OFERTA DA AMAZON (#Top{rank})</b> 🔥\n\n"
-        f"📦 <b>{title}</b>\n\n"
-        f"{preco_bloco}"
-        f"{cupao_bloco}\n"
-        f"🆔 <b>ASIN:</b> <code>{asin}</code>\n"
-    )
 
     channel_username = chat_id.replace("@", "")
     share_text = "Olha esta promoção incrível com desconto na Amazon! 😱🔥"
@@ -191,15 +234,18 @@ def scrape_bestsellers_category(category_url, limit=10):
 
 def main():
     init_db()
-    CATEGORY_URL = "https://www.amazon.es/gp/bestsellers/electronics/"
     
-    print("🔍 A verificar produtos e histórico de envio...")
-    products = scrape_bestsellers_category(CATEGORY_URL, limit=10)
+    # Deteta o dia da semana atual para trocar de categoria
+    weekday = datetime.datetime.now().weekday()
+    category_url = CATEGORY_MAP.get(weekday, CATEGORY_MAP[0])
+    
+    print(f"🔍 A verificar produtos da categoria do dia ({category_url})...")
+    products = scrape_bestsellers_category(category_url, limit=10)
 
     novos_enviados = 0
     for prod in products:
-        # Pula se o produto já foi enviado nas últimas 24 horas
-        if was_sent_recently(prod["asin"], hours=24):
+        # Definido para hours=0 para forçar o envio imediato durante os testes!
+        if was_sent_recently(prod["asin"], hours=0):
             print(f"⏭️ Ignorado (já enviado recentemente): {prod['asin']}")
             continue
 
@@ -220,73 +266,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-import datetime
-
-# Dicionário com URLs de Best Sellers para cada dia da semana (0 = Segunda, 6 = Domingo)
-CATEGORY_MAP = {
-    0: "https://www.amazon.es/gp/bestsellers/electronics/",        # Segunda: Eletrónica
-    1: "https://www.amazon.es/gp/bestsellers/kitchen/",            # Terça: Cozinha
-    2: "https://www.amazon.es/gp/bestsellers/computers/",          # Quarta: Informática
-    3: "https://www.amazon.es/gp/bestsellers/home-goods/",         # Quinta: Casa
-    4: "https://www.amazon.es/gp/bestsellers/sports/",             # Sexta: Desporto
-    5: "https://www.amazon.es/gp/bestsellers/toys/",               # Sábado: Brinquedos/Jogos
-    6: "https://www.amazon.es/gp/bestsellers/electronics/"         # Domingo: Eletrónica
-}
-
-def main():
-    init_db()
-    
-    # Deteta o dia da semana atual
-    weekday = datetime.datetime.now().weekday()
-    category_url = CATEGORY_MAP.get(weekday, CATEGORY_MAP[0])
-    
-    print(f"🔍 A verificar produtos da categoria do dia ({category_url})...")
-    products = scrape_bestsellers_category(category_url, limit=10)
-
-    novos_enviados = 0
-    for prod in products:
-        if was_sent_recently(prod["asin"], hours=24):
-            print(f"⏭️ Ignorado (já enviado recentemente): {prod['asin']}")
-            continue
-
-        send_telegram_card_with_photo(
-            title=prod["title"],
-            price=prod["price"],
-            old_price=prod["old_price"],
-            coupon=prod["coupon"],
-            asin=prod["asin"],
-            url=prod["url"],
-            image_url=prod["image_url"],
-            rank=prod["rank"]
-        )
-        save_product_data(prod["asin"], prod["title"], prod["price"], prod["rank"])
-        novos_enviados += 1
-
-    print(f"✅ Processo concluído! {novos_enviados} novos produtos enviados.")
-from openai import OpenAI
-
-def generate_ai_caption(title, price, old_price):
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return None # Caso não haja chave, usa o formato padrão
-
-    try:
-        client = OpenAI(api_key=api_key)
-        prompt = (
-            f"Cria um post curto e persuasivo para o Telegram a divulgar este produto em promoção na Amazon:\n"
-            f"Produto: {title}\n"
-            f"Preço: {price}€\n"
-            f"Preço Antigo: {old_price}€\n\n"
-            f"Instruções: Usa emojis atrativos, destaca a poupança e inclui frases apelativas de compra rápida. "
-            f"Não inclua links na resposta, foca-te apenas no texto curto e organizado em tópicos."
-        )
-        
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=200
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"[Aviso IA] Não foi possível gerar legenda com IA: {e}")
-        return None
