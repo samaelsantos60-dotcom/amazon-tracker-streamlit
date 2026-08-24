@@ -1,10 +1,10 @@
-name: Executar Amazon Tracker
+name: Amazon Tracker
 
 on:
-  workflow_dispatch: # Permite rodar manualmente
   schedule:
-    # Roda todos os dias às 10:00 UTC (11:00 no horário de Portugal)
-    - cron: '0 10 * * *'
+    # Corre todos os dias às 10:00 UTC (11:00 em Portugal) e às 18:00 UTC (19:00 em Portugal)
+    - cron: '0 10,18 * * *'
+  workflow_dispatch: # Permite continuar a executar manualmente no painel se quiseres
 
 jobs:
   build:
