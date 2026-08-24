@@ -174,7 +174,7 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
     res = requests.post(api_url, json=payload)
     print(f"📡 Telegram Response [{res.status_code}]: {res.text}")
 
-def scrape_bestsellers_category(category_url, limit=20):
+def scrape_bestsellers_category(category_url, limit=50):
     try:
         response = requests.get(category_url, headers=HEADERS, timeout=15)
         if response.status_code != 200:
@@ -221,7 +221,7 @@ def scrape_bestsellers_category(category_url, limit=20):
                     old_price = float(match.group(1))
 
             coupon = None
-            coupon_elem = card.find("span", text=re.compile(r"Cupón|Cupom|desconto", re.I)) or card.find("span", {"class": "a-badge-text"})
+            coupon_elem = card.find("span", string=re.compile(r"Cupón|Cupom|desconto", re.I)) or card.find("span", {"class": "a-badge-text"})
             if coupon_elem:
                 coupon = coupon_elem.get_text(strip=True)
 
@@ -249,7 +249,7 @@ def main():
     category_url = CATEGORY_MAP.get(weekday, CATEGORY_MAP[0])
     
     print(f"🔍 A procurar ofertas reais na categoria do dia ({category_url})...")
-    products = scrape_bestsellers_category(category_url, limit=20)
+    products = scrape_bestsellers_category(category_url, limit=50)
 
     novos_enviados = 0
     for prod in products:
