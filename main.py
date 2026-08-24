@@ -46,8 +46,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-def was_sent_recently(asin, hours=0):
-    """Muda para hours=24 em produção depois de testar!"""
+def was_sent_recently(asin, hours=24):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute('''
@@ -57,6 +56,19 @@ def was_sent_recently(asin, hours=0):
     row = cursor.fetchone()
     conn.close()
     return row is not None
+
+def get_last_price(asin):
+    """Procura o último preço registado do produto no histórico."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT price FROM products 
+        WHERE asin = ? 
+        ORDER BY timestamp DESC LIMIT 1
+    ''', (asin,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
 
 def save_product_data(asin, title, price, bsr):
     conn = sqlite3.connect(DB_NAME)
@@ -68,7 +80,7 @@ def save_product_data(asin, title, price, bsr):
     conn.commit()
     conn.close()
 
-def generate_ai_caption(title, price, old_price):
+def generate_ai_caption(title, price, old_price, coupon):
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return None
@@ -76,12 +88,13 @@ def generate_ai_caption(title, price, old_price):
     try:
         client = OpenAI(api_key=api_key)
         prompt = (
-            f"Cria um post curto e persuasivo para o Telegram a divulgar este produto em promoção na Amazon:\n"
+            f"Cria um post curto e super persuasivo para o Telegram a anunciar esta promoção imperdível da Amazon:\n"
             f"Produto: {title}\n"
-            f"Preço: {price}€\n"
-            f"Preço Antigo: {old_price}€\n\n"
-            f"Instruções: Usa emojis atrativos, destaca a poupança e inclui frases apelativas de compra rápida. "
-            f"Não inclua links na resposta, foca-te apenas no texto curto e organizado em tópicos."
+            f"Preço Atual: {price}€\n"
+            f"Preço Anterior: {old_price if old_price else 'N/A'}€\n"
+            f"Cupão Extra: {coupon if coupon else 'Nenhum'}\n\n"
+            f"Instruções: Usa emojis chamativos, destaca o desconto total e incita à compra rápida. "
+            f"Não incluas links no texto."
         )
         
         response = client.chat.completions.create(
@@ -101,11 +114,10 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
         print("[ERRO] Variáveis do Telegram não configuradas.")
         return
 
-    # Tenta usar a IA para gerar o texto da legenda
-    ai_caption = generate_ai_caption(title, price, old_price)
+    ai_caption = generate_ai_caption(title, price, old_price, coupon)
 
     if ai_caption:
-        caption = f"🔥 <b>OFERTA DA AMAZON (#Top{rank})</b> 🔥\n\n{ai_caption}\n\n🆔 <b>ASIN:</b> <code>{asin}</code>"
+        caption = f"🔥 <b>PROMOÇÃO IMPERDÍVEL</b> 🔥\n\n{ai_caption}\n\n🆔 <b>ASIN:</b> <code>{asin}</code>"
     else:
         preco_str = f"{price}€" if price else "Ver no site"
         preco_bloco = f"💰 <b>Preço:</b> {preco_str}\n"
@@ -121,7 +133,7 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
             cupao_bloco = f"🎟️ <b>CUPÃO DISPONÍVEL:</b> <i>{coupon}</i>\n⚠️ <i>Marca a caixa do cupão na página do produto!</i>\n"
 
         caption = (
-            f"🔥 <b>OFERTA DA AMAZON (#Top{rank})</b> 🔥\n\n"
+            f"🔥 <b>OFERTA DA AMAZON</b> 🔥\n\n"
             f"📦 <b>{title}</b>\n\n"
             f"{preco_bloco}"
             f"{cupao_bloco}\n"
@@ -162,7 +174,7 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
     res = requests.post(api_url, json=payload)
     print(f"📡 Telegram Response [{res.status_code}]: {res.text}")
 
-def scrape_bestsellers_category(category_url, limit=10):
+def scrape_bestsellers_category(category_url, limit=20):
     try:
         response = requests.get(category_url, headers=HEADERS, timeout=15)
         if response.status_code != 200:
@@ -172,8 +184,6 @@ def scrape_bestsellers_category(category_url, limit=10):
         soup = BeautifulSoup(response.content, "html.parser")
         products = []
         cards = soup.find_all("div", {"id": re.compile(r"^gridItemRoot")})
-
-        print(f"📦 Produtos encontrados no HTML: {len(cards)}")
 
         for rank, card in enumerate(cards[:limit], start=1):
             title_elem = card.find("span", {"class": re.compile(r"_cDEbf_title_")}) or card.find("div", {"class": "p13n-sc-css-line-clamp-1"}) or card.find("a", {"class": "a-link-normal"})
@@ -235,34 +245,56 @@ def scrape_bestsellers_category(category_url, limit=10):
 def main():
     init_db()
     
-    # Deteta o dia da semana atual para trocar de categoria
     weekday = datetime.datetime.now().weekday()
     category_url = CATEGORY_MAP.get(weekday, CATEGORY_MAP[0])
     
-    print(f"🔍 A verificar produtos da categoria do dia ({category_url})...")
-    products = scrape_bestsellers_category(category_url, limit=10)
+    print(f"🔍 A procurar ofertas reais na categoria do dia ({category_url})...")
+    products = scrape_bestsellers_category(category_url, limit=20)
 
     novos_enviados = 0
     for prod in products:
-        # Definido para hours=0 para forçar o envio imediato durante os testes!
-        if was_sent_recently(prod["asin"], hours=0):
-            print(f"⏭️ Ignorado (já enviado recentemente): {prod['asin']}")
+        asin = prod["asin"]
+        price = prod["price"]
+        old_price = prod["old_price"]
+        coupon = prod["coupon"]
+
+        # 1. Pula se já tiver sido enviado recentemente
+        if was_sent_recently(asin, hours=24):
+            print(f"⏭️ Ignorado (já enviado nas últimas 24h): {asin}")
             continue
 
+        # 2. VALIDAÇÃO DE PROMOÇÃO REAL:
+        has_coupon = coupon is not None
+        has_discount = False
+        if old_price and price and old_price > price:
+            desconto_perc = ((old_price - price) / old_price) * 100
+            if desconto_perc >= 15:  # Pelo menos 15% de desconto
+                has_discount = True
+
+        # 3. Verifica se o preço atual baixou comparado ao histórico na DB
+        last_price = get_last_price(asin)
+        price_dropped = (last_price is not None) and (price is not None) and (price < last_price)
+
+        # Se não tiver cupão, nem desconto >= 15%, nem tiver baixado de preço -> Ignora!
+        if not (has_coupon or has_discount or price_dropped):
+            print(f"⏭️ Ignorado (sem promoção relevante): {asin} (Preço: {price}€)")
+            continue
+
+        print(f"🔥 PROMOÇÃO ENCONTRADA! Enviando produto {asin}...")
         send_telegram_card_with_photo(
             title=prod["title"],
-            price=prod["price"],
-            old_price=prod["old_price"],
-            coupon=prod["coupon"],
-            asin=prod["asin"],
+            price=price,
+            old_price=old_price,
+            coupon=coupon,
+            asin=asin,
             url=prod["url"],
             image_url=prod["image_url"],
             rank=prod["rank"]
         )
-        save_product_data(prod["asin"], prod["title"], prod["price"], prod["rank"])
+        save_product_data(asin, prod["title"], price, prod["rank"])
         novos_enviados += 1
 
-    print(f"✅ Processo concluído! {novos_enviados} novos produtos enviados.")
+    print(f"✅ Processo concluído! {novos_enviados} ofertas qualificadas enviadas.")
 
 if __name__ == "__main__":
     main()
