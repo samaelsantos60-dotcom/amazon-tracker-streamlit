@@ -2,8 +2,8 @@ name: Executar Amazon Tracker
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
-  workflow_dispatch:
+    - cron: '0 */6 * * *' # Corre automaticamente a cada 6 horas
+  workflow_dispatch: # Permite executar manualmente no GitHub
 
 permissions:
   contents: write
@@ -29,7 +29,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python bot.py
+        run: python main.py
 
       - name: Guardar Base de Dados no Repositório
         run: |
