@@ -1,40 +1,63 @@
-name: Executar Amazon Tracker
-
-on:
-  schedule:
-    - cron: '0 */6 * * *'
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout do código
-        uses: actions/checkout@v3
-
-      - name: Configurar Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.10'
-
-      - name: Instalar Dependências
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-
-      - name: Executar Recolha de Dados
-        run: python main.py
-
-      - name: Guardar Base de Dados no Repositório
-        run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          git add -f amazon_tracker.db
-          git commit -m "Atualização automática da base de dados [skip ci]" || exit 0
-          git push
+import os
+import sqlite3
+import requests
+from bs4 import BeautifulSoup
 from alerts import send_alert
 
-send_alert("🤖 <b>Teste:</b> O bot do Telegram está a funcionar perfeitamente!")
+# --- CONFIGURAÇÃO DA BASE DE DADOS ---
+DB_NAME = "amazon_tracker.db"
+
+def init_db():
+    """Cria a tabela no SQLite caso ainda não exista."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            asin TEXT NOT NULL,
+            title TEXT,
+            price REAL,
+            bsr INTEGER,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def save_product_data(asin, title, price, bsr):
+    """Guarda a recolha de dados na base de dados."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO products (asin, title, price, bsr)
+        VALUES (?, ?, ?, ?)
+    ''', (asin, title, price, bsr))
+    conn.commit()
+    conn.close()
+
+# --- FUNÇÃO PRINCIPAL DE SCRAPING ---
+def run_tracker():
+    """Executa a rotina de verificação dos produtos."""
+    init_db()
+    
+    # Exemplo de lista de ASINs para monitorizar
+    asins = ["B08N5WRWNW"] 
+    
+    print("🔍 A iniciar verificação de produtos...")
+    
+    for asin in asins:
+        # Lógica simplificada de rastreio
+        title = "Produto Exemplo Amazon"
+        price = 29.99
+        bsr = 1500
+        
+        save_product_data(asin, title, price, bsr)
+        print(f"✅ Dados guardados para o ASIN: {asin}")
+
+if __name__ == "__main__":
+    # 1. Executa a rotina normal do tracker
+    run_tracker()
+    
+    # 2. MENSAGEM DE TESTE (Força o envio imediato para o Telegram)
+    print("🚀 A enviar mensagem de teste para o Telegram...")
+    send_alert("🚨 <b>Teste do Amazon Tracker</b>\n\nO teu bot do Telegram está totalmente configurado e a comunicar com o GitHub Actions com sucesso! 🎉")
