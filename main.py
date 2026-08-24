@@ -7,13 +7,15 @@ from bs4 import BeautifulSoup
 DB_NAME = "amazon_tracker.db"
 AFFILIATE_TAG = os.environ.get("AMAZON_ASSOCIATE_TAG", "SEU_TAG_AQUI-21")
 
+# User-Agent atualizado para evitar bloqueios simples da Amazon
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
+        "Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept-Language": "es-ES,es;q=0.9,en;q=0.8,pt;q=0.7",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
 }
 
 def init_db():
@@ -76,7 +78,7 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
         cupao_bloco = f"🎟️ <b>CUPÃO DISPONÍVEL:</b> <i>{coupon}</i>\n⚠️ <i>Marca a caixa do cupão na página do produto!</i>\n"
 
     caption = (
-        f"🔥 <b>OFERTA DA AMAZON</b> 🔥\n\n"
+        f"🔥 <b>OFERTA DA AMAZON (#Top{rank})</b> 🔥\n\n"
         f"📦 <b>{title}</b>\n\n"
         f"{preco_bloco}"
         f"{cupao_bloco}\n"
@@ -114,20 +116,25 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
             "reply_markup": reply_markup
         }
 
-    requests.post(api_url, json=payload)
+    res = requests.post(api_url, json=payload)
+    if res.status_code != 200:
+        print(f"[ERRO Telegram] Falha ao enviar: {res.text}")
 
 def scrape_bestsellers_category(category_url, limit=10):
     try:
         response = requests.get(category_url, headers=HEADERS, timeout=15)
         if response.status_code != 200:
+            print(f"[ERRO Amazon] Status code da requisição: {response.status_code}")
             return []
 
         soup = BeautifulSoup(response.content, "html.parser")
         products = []
         cards = soup.find_all("div", {"id": re.compile(r"^gridItemRoot")})
 
+        print(f"📦 Produtos encontrados no HTML: {len(cards)}")
+
         for rank, card in enumerate(cards[:limit], start=1):
-            title_elem = card.find("span", {"class": re.compile(r"_cDEbf_title_")}) or card.find("div", {"class": "p13n-sc-css-line-clamp-1"})
+            title_elem = card.find("span", {"class": re.compile(r"_cDEbf_title_")}) or card.find("div", {"class": "p13n-sc-css-line-clamp-1"}) or card.find("a", {"class": "a-link-normal"})
             title = title_elem.get_text(strip=True) if title_elem else "Produto Amazon"
 
             img_elem = card.find("img")
@@ -147,7 +154,7 @@ def scrape_bestsellers_category(category_url, limit=10):
 
             price = None
             old_price = None
-            price_elem = card.find("span", {"class": "_cDEbf_price_11U0m"}) or card.find("span", {"class": "a-color-price"})
+            price_elem = card.find("span", {"class": "_cDEbf_price_11U0m"}) or card.find("span", {"class": "a-color-price"}) or card.find("span", {"class": "p13n-sc-price"})
             if price_elem:
                 price_text = price_elem.get_text().replace(",", ".").replace("€", "").strip()
                 match = re.search(r"(\d+\.?\d*)", price_text)
@@ -180,7 +187,7 @@ def scrape_bestsellers_category(category_url, limit=10):
         return products
 
     except Exception as e:
-        print(f"[ERRO] Exceção: {e}")
+        print(f"[ERRO] Exceção no Scraper: {e}")
         return []
 
 def main():
@@ -214,5 +221,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-from alerts import send_alert
-send_alert("🧪 Teste de Notificação: Se leres isto, o bot está a funcionar!")
