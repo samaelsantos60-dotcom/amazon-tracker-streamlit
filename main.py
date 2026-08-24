@@ -117,8 +117,7 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
         }
 
     res = requests.post(api_url, json=payload)
-    if res.status_code != 200:
-        print(f"[ERRO Telegram] Falha ao enviar: {res.text}")
+    print(f"📡 Telegram Response [{res.status_code}]: {res.text}")
 
 def scrape_bestsellers_category(category_url, limit=10):
     try:
