@@ -1,0 +1,23 @@
+# Credenciais e configurações locais
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Dados locais e logs
+*.db
+*.sqlite
+*.sqlite3
+*.log
+*.pid
+
+# Python
+__pycache__/
+*.py[cod]
+.pythonlibs/
+.venv/
+venv/
+
+# Replit temporários
+.replit.new
