@@ -16,7 +16,7 @@ HEADERS = {
     "Accept-Language": "es-ES,es;q=0.9,en;q=0.8,pt;q=0.7",
 }
 
-def send_telegram_card_with_photo(title, price, asin, url, image_url, rank):
+def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, image_url, rank):
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
@@ -24,31 +24,42 @@ def send_telegram_card_with_photo(title, price, asin, url, image_url, rank):
         return
 
     preco_str = f"{price}€" if price else "Ver no site"
+    
+    # Formatação de preços e descontos
+    preco_bloco = f"💰 <b>Preço:</b> {preco_str}\n"
+    if old_price and price and old_price > price:
+        desconto = int(((old_price - price) / old_price) * 100)
+        preco_bloco = (
+            f"💰 <b>Preço Promoção:</b> {preco_str} "
+            f"<s>({old_price}€)</s> 🔥 <b>-{desconto}%</b>\n"
+        )
 
-    # Legenda que fica por baixo da imagem
+    # Bloco de cupão
+    cupao_bloco = ""
+    if coupon:
+        cupao_bloco = f"🎟️ <b>CUPÃO DISPONÍVEL:</b> <i>{coupon}</i>\n⚠️ <i>Marca a caixa do cupão na página do produto!</i>\n"
+
     caption = (
         f"🔥 <b>OFERTA #{rank} DA AMAZON</b> 🔥\n\n"
         f"📦 <b>{title}</b>\n\n"
-        f"💰 <b>Preço:</b> {preco_str}\n"
+        f"{preco_bloco}"
+        f"{cupao_bloco}\n"
         f"🆔 <b>ASIN:</b> <code>{asin}</code>\n"
     )
 
-    # Link dinâmico de partilha no Telegram
     channel_username = chat_id.replace("@", "")
-    share_text = "Olha esta oferta imperdível na Amazon! 😱🔥"
+    share_text = "Olha esta promoção incrível com desconto na Amazon! 😱🔥"
     share_url = f"https://t.me/share/url?url=https://t.me/{channel_username}&text={requests.utils.quote(share_text)}"
 
-    # Teclado com os 2 botões abaixo da imagem
     reply_markup = {
         "inline_keyboard": [
             [
-                {"text": "🛒 VER OFERTA", "url": url},
+                {"text": "🛒 VER PROMOÇÃO", "url": url},
                 {"text": "📲 PARTILHAR", "url": share_url}
             ]
         ]
     }
 
-    # Se houver imagem válida, envia como Foto + Legenda
     if image_url and image_url.startswith("http"):
         api_url = f"https://api.telegram.org/bot{token}/sendPhoto"
         payload = {
@@ -59,7 +70,6 @@ def send_telegram_card_with_photo(title, price, asin, url, image_url, rank):
             "reply_markup": reply_markup
         }
     else:
-        # Fallback para mensagem de texto se não encontrar imagem
         api_url = f"https://api.telegram.org/bot{token}/sendMessage"
         payload = {
             "chat_id": chat_id,
@@ -110,11 +120,8 @@ def scrape_bestsellers_category(category_url, limit=5):
             title_elem = card.find("span", {"class": re.compile(r"_cDEbf_title_")}) or card.find("div", {"class": "p13n-sc-css-line-clamp-1"})
             title = title_elem.get_text(strip=True) if title_elem else "Produto Amazon"
 
-            # Extração da imagem do produto
             img_elem = card.find("img")
-            image_url = ""
-            if img_elem and "src" in img_elem.attrs:
-                image_url = img_elem["src"]
+            image_url = img_elem["src"] if img_elem and "src" in img_elem.attrs else ""
 
             link_elem = card.find("a", {"class": "a-link-normal"})
             href = link_elem["href"] if link_elem else ""
@@ -125,7 +132,9 @@ def scrape_bestsellers_category(category_url, limit=5):
 
             affiliate_url = f"https://www.amazon.es/dp/{asin}?tag={AFFILIATE_TAG}" if asin != "N/D" else clean_url
 
+            # Leitura de preço atual e preço antigo
             price = None
+            old_price = None
             price_elem = card.find("span", {"class": "_cDEbf_price_11U0m"}) or card.find("span", {"class": "a-color-price"})
             if price_elem:
                 price_text = price_elem.get_text().replace(",", ".").replace("€", "").strip()
@@ -133,11 +142,26 @@ def scrape_bestsellers_category(category_url, limit=5):
                 if match:
                     price = float(match.group(1))
 
+            old_price_elem = card.find("span", {"class": "a-text-price"})
+            if old_price_elem:
+                old_price_text = old_price_elem.get_text().replace(",", ".").replace("€", "").strip()
+                match = re.search(r"(\d+\.?\d*)", old_price_text)
+                if match:
+                    old_price = float(match.group(1))
+
+            # Procura por badges de cupão ou desconto extra
+            coupon = None
+            coupon_elem = card.find("span", text=re.compile(r"Cupón|Cupom|desconto", re.I)) or card.find("span", {"class": "a-badge-text"})
+            if coupon_elem:
+                coupon = coupon_elem.get_text(strip=True)
+
             products.append({
                 "rank": rank,
                 "asin": asin,
                 "title": title,
                 "price": price,
+                "old_price": old_price,
+                "coupon": coupon,
                 "url": affiliate_url,
                 "image_url": image_url
             })
@@ -152,7 +176,7 @@ def main():
     init_db()
     CATEGORY_URL = "https://www.amazon.es/gp/bestsellers/electronics/"
     
-    print("🔍 A recolher produtos e fotos para o Telegram...")
+    print("🔍 A verificar ofertas, cupões e promoções...")
     products = scrape_bestsellers_category(CATEGORY_URL, limit=5)
 
     for prod in products:
@@ -160,13 +184,15 @@ def main():
         send_telegram_card_with_photo(
             title=prod["title"],
             price=prod["price"],
+            old_price=prod["old_price"],
+            coupon=prod["coupon"],
             asin=prod["asin"],
             url=prod["url"],
             image_url=prod["image_url"],
             rank=prod["rank"]
         )
 
-    print("✅ Cartões com foto e botões enviados!")
+    print("✅ Ofertas e promoções enviadas com sucesso!")
 
 if __name__ == "__main__":
     main()
