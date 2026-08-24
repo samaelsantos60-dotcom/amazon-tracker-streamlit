@@ -34,7 +34,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-def was_sent_recently(asin, hours=24):
+def was_sent_recently(asin, hours=0):
     """Verifica se o produto (ASIN) foi enviado para o Telegram nas últimas X horas."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
