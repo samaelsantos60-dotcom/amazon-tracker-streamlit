@@ -221,3 +221,46 @@ def main():
 
 if __name__ == "__main__":
     main()
+import datetime
+
+# Dicionário com URLs de Best Sellers para cada dia da semana (0 = Segunda, 6 = Domingo)
+CATEGORY_MAP = {
+    0: "https://www.amazon.es/gp/bestsellers/electronics/",        # Segunda: Eletrónica
+    1: "https://www.amazon.es/gp/bestsellers/kitchen/",            # Terça: Cozinha
+    2: "https://www.amazon.es/gp/bestsellers/computers/",          # Quarta: Informática
+    3: "https://www.amazon.es/gp/bestsellers/home-goods/",         # Quinta: Casa
+    4: "https://www.amazon.es/gp/bestsellers/sports/",             # Sexta: Desporto
+    5: "https://www.amazon.es/gp/bestsellers/toys/",               # Sábado: Brinquedos/Jogos
+    6: "https://www.amazon.es/gp/bestsellers/electronics/"         # Domingo: Eletrónica
+}
+
+def main():
+    init_db()
+    
+    # Deteta o dia da semana atual
+    weekday = datetime.datetime.now().weekday()
+    category_url = CATEGORY_MAP.get(weekday, CATEGORY_MAP[0])
+    
+    print(f"🔍 A verificar produtos da categoria do dia ({category_url})...")
+    products = scrape_bestsellers_category(category_url, limit=10)
+
+    novos_enviados = 0
+    for prod in products:
+        if was_sent_recently(prod["asin"], hours=24):
+            print(f"⏭️ Ignorado (já enviado recentemente): {prod['asin']}")
+            continue
+
+        send_telegram_card_with_photo(
+            title=prod["title"],
+            price=prod["price"],
+            old_price=prod["old_price"],
+            coupon=prod["coupon"],
+            asin=prod["asin"],
+            url=prod["url"],
+            image_url=prod["image_url"],
+            rank=prod["rank"]
+        )
+        save_product_data(prod["asin"], prod["title"], prod["price"], prod["rank"])
+        novos_enviados += 1
+
+    print(f"✅ Processo concluído! {novos_enviados} novos produtos enviados.")
