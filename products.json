@@ -1,0 +1,12 @@
+[
+  {
+    "asin": "B08HDHJC2D",
+    "categoria": "Tecnologia",
+    "prioridade": "alta"
+  },
+  {
+    "asin": "B07PVF6LKH",
+    "categoria": "Casa",
+    "prioridade": "media"
+  }
+]
