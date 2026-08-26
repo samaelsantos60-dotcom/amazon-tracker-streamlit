@@ -2,18 +2,19 @@ name: Amazon Tracker
 
 on:
   schedule:
-    # Corre todos os dias às 10:00 UTC (11:00 em Portugal) e às 18:00 UTC (19:00 em Portugal)
+    # Corre todos os dias às 10:00 UTC e às 18:00 UTC
     - cron: '0 10,18 * * *'
-  workflow_dispatch: # Permite continuar a executar manualmente no painel se quiseres
+  workflow_dispatch: # Permite executar manualmente no painel do GitHub
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
       
       - name: Configurar Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           
@@ -27,4 +28,5 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: python main.py
+        # O parâmetro -u (unbuffered) força a exibição dos prints imediatamente nos logs
+        run: python -u main.py
