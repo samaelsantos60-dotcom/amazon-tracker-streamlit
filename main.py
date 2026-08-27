@@ -21,7 +21,7 @@ HEADERS = {
     "Upgrade-Insecure-Requests": "1"
 }
 
-# 1. URLs diretas verificadas das subcategorias desejadas
+# URLs diretas verificadas das subcategorias desejadas
 CATEGORY_MAP = {
     0: "https://www.amazon.es/gp/bestsellers/baby/ref=zg_bs_nav_baby_0",            # Segunda: Bebé / Fraldas / Lenços
     1: "https://www.amazon.es/gp/bestsellers/beauty/ref=zg_bs_nav_beauty_0",        # Terça: Maquilhagem / Beleza
@@ -77,16 +77,20 @@ def generate_ai_caption(title, price, old_price, coupon):
     try:
         client = OpenAI(api_key=api_key)
         prompt = (
-            f"Cria uma legenda curta para Telegram em português:\n"
-            f"Produto: {title}\nPreço: {price}€\n\n"
-            f"Foca na urgência da promoção para público de compras do dia a dia. Não uses links no texto."
+            f"Cria um texto persuasivo e muito curto para o Telegram em português europeu sobre o produto:\n"
+            f"Produto: {title}\n\n"
+            f"Regras:\n"
+            f"1. Explica sucintamente o que é e porque vale a pena comprar.\n"
+            f"2. Cria urgência de compra sem inventar percentagens de desconto.\n"
+            f"3. NÃO incluas o preço, nome do produto nem links no texto (esses dados já são adicionados automaticamente).\n"
+            f"4. Escreve no máximo 2 a 3 frases curtas."
         )
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=150
+            max_tokens=120
         )
-        return response.choices[0].message.content
+        return response.choices[0].message.content.strip()
     except Exception as e:
         print(f"⚠️ [IA Warning] Não foi possível gerar legenda: {e}", flush=True)
         return None
@@ -102,23 +106,23 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
     ai_caption = generate_ai_caption(title, price, old_price, coupon)
     clean_title = html.escape(title)
 
-    if ai_caption:
-        caption = f"🔥 <b>PROMOÇÃO IMPERDÍVEL</b> 🔥\n\n{html.escape(ai_caption)}\n\n🆔 <b>ASIN:</b> <code>{asin}</code>"
-    else:
-        preco_str = f"{price}€" if price else "Ver no site"
-        preco_bloco = f"💰 <b>Preço:</b> {preco_str}\n"
-        if old_price and price and old_price > price:
-            desconto = int(((old_price - price) / old_price) * 100)
-            preco_bloco = f"💰 <b>Preço Promoção:</b> {preco_str} <s>({old_price}€)</s> 🔥 <b>-{desconto}%</b>\n"
+    preco_str = f"{price}€" if price else "Ver no site"
+    preco_bloco = f"💰 <b>Preço:</b> {preco_str}\n"
+    if old_price and price and old_price > price:
+        desconto = int(((old_price - price) / old_price) * 100)
+        preco_bloco = f"💰 <b>Preço Promoção:</b> {preco_str} <s>({old_price}€)</s> 🔥 <b>-{desconto}%</b>\n"
 
-        cupao_bloco = f"🎟️ <b>CUPÃO:</b> <i>{html.escape(coupon)}</i>\n" if coupon else ""
-        caption = (
-            f"🔥 <b>OFERTA DA AMAZON</b> 🔥\n\n"
-            f"📦 <b>{clean_title}</b>\n\n"
-            f"{preco_bloco}"
-            f"{cupao_bloco}\n"
-            f"🆔 <b>ASIN:</b> <code>{asin}</code>\n"
-        )
+    cupao_bloco = f"🎟️ <b>CUPÃO:</b> <i>{html.escape(coupon)}</i>\n" if coupon else ""
+    descricao_ia = f"\n{html.escape(ai_caption)}\n" if ai_caption else ""
+
+    caption = (
+        f"🔥 <b>OFERTA DA AMAZON</b> 🔥\n\n"
+        f"📦 <b>{clean_title}</b>\n"
+        f"{descricao_ia}\n"
+        f"{preco_bloco}"
+        f"{cupao_bloco}"
+        f"🆔 <b>ASIN:</b> <code>{asin}</code>\n"
+    )
 
     channel_username = chat_id.replace("@", "")
     share_url = f"https://t.me/share/url?url=https://t.me/{channel_username}&text=Olha+esta+oferta!"
@@ -164,7 +168,6 @@ def scrape_bestsellers_category(category_url, limit=60):
         soup = BeautifulSoup(response.content, "html.parser")
         products = []
         
-        # Múltiplas estratégias de seletores HTML da Amazon
         cards = soup.find_all("div", {"id": re.compile(r"^gridItemRoot")})
         if not cards:
             cards = soup.find_all("div", {"class": re.compile(r"zg-grid-general-faceout")})
@@ -245,7 +248,6 @@ def main():
         price = prod["price"]
         old_price = prod["old_price"]
 
-        # Bloqueia repetidos por 14 dias (336h)
         if was_sent_recently(asin, hours=336):
             print(f"⏭️ Ignorado (já enviado nos últimos 14 dias): {asin}", flush=True)
             continue
@@ -266,7 +268,6 @@ def main():
         if sucesso:
             save_product_data(asin, prod["title"], price, prod["rank"])
             novos_enviados += 1
-            # Pausa de 2 segundos para evitar rate-limit no Telegram
             time.sleep(2)
 
     print(f"✅ Processo concluído! {novos_enviados} produtos enviados hoje.", flush=True)
