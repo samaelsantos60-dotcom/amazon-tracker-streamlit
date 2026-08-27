@@ -21,13 +21,13 @@ HEADERS = {
     "Upgrade-Insecure-Requests": "1"
 }
 
-# URLs diretas verificadas das subcategorias desejadas
+# URLs diretas das subcategorias desejadas
 CATEGORY_MAP = {
-    0: "https://www.amazon.es/gp/bestsellers/baby/ref=zg_bs_nav_baby_0",            # Segunda: Bebé / Fraldas / Lenços
-    1: "https://www.amazon.es/gp/bestsellers/beauty/ref=zg_bs_nav_beauty_0",        # Terça: Maquilhagem / Beleza
-    2: "https://www.amazon.es/gp/bestsellers/hpc/ref=zg_bs_nav_hpc_0",              # Quarta: Saúde e Cuidado Pessoal / Higiene
-    3: "https://www.amazon.es/gp/bestsellers/grocery/ref=zg_bs_nav_grocery_0",      # Quinta: Limpeza / Supermercado
-    4: "https://www.amazon.es/gp/bestsellers/beauty/2877074031",                    # Sexta: Banho e Banho Corporal / Champôs
+    0: "https://www.amazon.es/gp/bestsellers/baby/ref=zg_bs_nav_baby_0",            # Segunda: Bebé
+    1: "https://www.amazon.es/gp/bestsellers/beauty/ref=zg_bs_nav_beauty_0",        # Terça: Beleza
+    2: "https://www.amazon.es/gp/bestsellers/hpc/ref=zg_bs_nav_hpc_0",              # Quarta: Higiene / Saúde
+    3: "https://www.amazon.es/gp/bestsellers/grocery/ref=zg_bs_nav_grocery_0",      # Quinta: Supermercado
+    4: "https://www.amazon.es/gp/bestsellers/beauty/2877074031",                    # Sexta: Champôs / Banho
     5: "https://www.amazon.es/gp/bestsellers/beauty/ref=zg_bs_nav_beauty_0",        # Sábado: Cosmética
     6: "https://www.amazon.es/gp/bestsellers/baby/ref=zg_bs_nav_baby_0"             # Domingo: Bebé
 }
@@ -82,7 +82,7 @@ def generate_ai_caption(title, price, old_price, coupon):
             f"Regras:\n"
             f"1. Explica sucintamente o que é e porque vale a pena comprar.\n"
             f"2. Cria urgência de compra sem inventar percentagens de desconto.\n"
-            f"3. NÃO incluas o preço, nome do produto nem links no texto (esses dados já são adicionados automaticamente).\n"
+            f"3. NÃO incluas o preço, nome do produto nem links no texto.\n"
             f"4. Escreve no máximo 2 a 3 frases curtas."
         )
         response = client.chat.completions.create(
@@ -113,15 +113,21 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
         preco_bloco = f"💰 <b>Preço Promoção:</b> {preco_str} <s>({old_price}€)</s> 🔥 <b>-{desconto}%</b>\n"
 
     cupao_bloco = f"🎟️ <b>CUPÃO:</b> <i>{html.escape(coupon)}</i>\n" if coupon else ""
-    descricao_ia = f"\n{html.escape(ai_caption)}\n" if ai_caption else ""
+    
+    # Bloco descritivo: Usa a IA ou uma frase genérica se a IA falhar
+    if ai_caption:
+        descricao_bloco = f"{html.escape(ai_caption)}\n\n"
+    else:
+        descricao_bloco = "⚡ Aproveita esta grande oportunidade em destaque na Amazon!\n\n"
 
+    # Montagem final da legenda sem linhas em branco excessivas
     caption = (
         f"🔥 <b>OFERTA DA AMAZON</b> 🔥\n\n"
-        f"📦 <b>{clean_title}</b>\n"
-        f"{descricao_ia}\n"
+        f"📦 <b>{clean_title}</b>\n\n"
+        f"{descricao_bloco}"
         f"{preco_bloco}"
         f"{cupao_bloco}"
-        f"🆔 <b>ASIN:</b> <code>{asin}</code>\n"
+        f"🆔 <b>ASIN:</b> <code>{asin}</code>"
     )
 
     channel_username = chat_id.replace("@", "")
@@ -175,14 +181,35 @@ def scrape_bestsellers_category(category_url, limit=60):
         print(f"📦 Produtos extraídos da página: {len(cards)}", flush=True)
 
         for rank, card in enumerate(cards[:limit], start=1):
-            title_elem = (
-                card.find("span", {"class": re.compile(r"_cDEbf_title_")}) 
-                or card.find("div", {"class": "p13n-sc-css-line-clamp-1"}) 
-                or card.find("a", {"class": "a-link-normal"})
-            )
-            title = title_elem.get_text(strip=True) if title_elem else "Produto Amazon"
+            title = ""
 
+            # 1. Tenta encontrar a tag de imagem e usar o atributo 'alt' (mais fiável)
             img_elem = card.find("img")
+            if img_elem and img_elem.get("alt"):
+                title = img_elem["alt"].strip()
+
+            # 2. Se falhar, procura por seletores textuais de título da Amazon
+            if not title:
+                title_elem = (
+                    card.find("div", {"class": re.compile(r"_cDEbf_title_")})
+                    or card.find("span", {"class": re.compile(r"_cDEbf_title_")})
+                    or card.find("div", {"class": "p13n-sc-css-line-clamp-1"})
+                    or card.find("div", {"class": "p13n-sc-truncate-desktop-type2"})
+                    or card.find("span", {"class": "zg-text-js-queue-clamp"})
+                )
+                if title_elem:
+                    title = title_elem.get_text(strip=True)
+
+            # 3. Se ainda assim estiver vazio, tenta capturar o texto dentro dos links <a>
+            if not title:
+                link_title = card.find("a", {"class": "a-link-normal"})
+                if link_title:
+                    title = link_title.get_text(strip=True)
+
+            # 4. Fallback final se nada for encontrado
+            if not title:
+                title = "Produto Amazon em Promoção"
+
             image_url = img_elem["src"] if img_elem and "src" in img_elem.attrs else ""
 
             link_elem = card.find("a", {"class": "a-link-normal"})
