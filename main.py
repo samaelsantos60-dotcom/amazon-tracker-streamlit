@@ -89,7 +89,11 @@ def generate_ai_caption(title, price, old_price, coupon):
             model="gpt-4o-mini",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=120
-        )
+        )headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept-Language": "es-ES,es;q=0.9,pt-PT;q=0.8,pt;q=0.7"
+}
+response = requests.get(url, headers=headers)
         return response.choices[0].message.content.strip()
     except Exception as e:
         print(f"⚠️ [IA Warning] Não foi possível gerar legenda: {e}", flush=True)
