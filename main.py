@@ -11,15 +11,6 @@ import google.generativeai as genai
 DB_NAME = "amazon_tracker.db"
 AFFILIATE_TAG = os.environ.get("AMAZON_ASSOCIATE_TAG", "ofertaspromop-21")
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "es-ES,es;q=0.9,pt-PT;q=0.8,pt;q=0.7",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1"
-}
-
 CATEGORY_MAP = {
     0: "https://www.amazon.es/gp/bestsellers/baby/",
     1: "https://www.amazon.es/gp/bestsellers/beauty/",
@@ -29,6 +20,25 @@ CATEGORY_MAP = {
     5: "https://www.amazon.es/gp/bestsellers/beauty/",
     6: "https://www.amazon.es/gp/bestsellers/baby/"
 }
+
+def get_session():
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "es-ES,es;q=0.9,pt-PT;q=0.8,pt;q=0.7,en-US;q=0.6,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1"
+    })
+    return session
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -156,9 +166,10 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
         return False
 
 def scrape_bestsellers_category(category_url, limit=60):
+    session = get_session()
     try:
         print(f"📡 Efetuando requisição à URL: {category_url}", flush=True)
-        response = requests.get(category_url, headers=HEADERS, timeout=15)
+        response = session.get(category_url, timeout=15)
         print(f"📡 Status HTTP Amazon: {response.status_code}", flush=True)
         
         if response.status_code != 200:
@@ -168,11 +179,14 @@ def scrape_bestsellers_category(category_url, limit=60):
         soup = BeautifulSoup(response.content, "html.parser")
         products = []
         
+        # Procura os cards por vários seletores possíveis
         cards = soup.find_all("div", {"id": re.compile(r"^gridItemRoot")})
         if not cards:
             cards = soup.find_all("div", {"class": re.compile(r"zg-grid-general-faceout")})
         if not cards:
             cards = soup.find_all("div", {"class": re.compile(r"p13n-sc-unstructured-line-item")})
+        if not cards:
+            cards = soup.find_all("li", {"class": re.compile(r"zg-item-immersion")})
 
         print(f"📦 Produtos extraídos da página: {len(cards)}", flush=True)
 
@@ -189,6 +203,7 @@ def scrape_bestsellers_category(category_url, limit=60):
                     or card.find("span", {"class": re.compile(r"_cDEbf_title_")})
                     or card.find("div", {"class": "p13n-sc-css-line-clamp-1"})
                     or card.find("div", {"class": "p13n-sc-truncate-desktop-type2"})
+                    or card.find("a", {"class": "a-link-normal"})
                 )
                 if title_elem:
                     title = title_elem.get_text(strip=True)
@@ -196,13 +211,19 @@ def scrape_bestsellers_category(category_url, limit=60):
             if not title:
                 title = "Produto Amazon em Promoção"
 
-            image_url = img_elem["src"] if img_elem and "src" in img_elem.attrs else ""
+            image_url = ""
+            if img_elem:
+                image_url = img_elem.get("src") or img_elem.get("data-a-dynamic-image", "")
+                if "{" in image_url:
+                    match_img = re.search(r'"(https://[^"]+)"', image_url)
+                    if match_img:
+                        image_url = match_img.group(1)
 
             link_elem = card.find("a", {"class": "a-link-normal"})
             href = link_elem["href"] if link_elem and "href" in link_elem.attrs else ""
             clean_url = f"https://www.amazon.es{href}" if href.startswith("/") else href
 
-            asin_match = re.search(r"/(?:dp|product-reviews)/([A-Z0-9]{10})", clean_url)
+            asin_match = re.search(r"/(?:dp|product-reviews|gp/product)/([A-Z0-9]{10})", clean_url)
             asin = asin_match.group(1) if asin_match else "N/D"
 
             if asin == "N/D":
@@ -212,10 +233,11 @@ def scrape_bestsellers_category(category_url, limit=60):
 
             price = None
             price_elem = (
-                card.find("span", {"class": "_cDEbf_price_11U0m"}) 
+                card.find("span", {"class": re.compile(r"_cDEbf_price_")}) 
                 or card.find("span", {"class": "a-color-price"}) 
                 or card.find("span", {"class": "p13n-sc-price"})
                 or card.find("span", {"class": "a-size-base a-color-price"})
+                or card.find("span", {"class": "_cDEbf_price_11U0m"})
             )
             if price_elem:
                 price_text = price_elem.get_text().replace(",", ".").replace("€", "").strip()
