@@ -166,10 +166,18 @@ def send_telegram_card_with_photo(title, price, old_price, coupon, asin, url, im
         return False
 
 def scrape_bestsellers_category(category_url, limit=60):
+    scraper_key = os.environ.get("SCRAPER_API_KEY")
     session = get_session()
+
+    if scraper_key:
+        target_url = f"http://api.scraperapi.com?api_key={scraper_key}&url={category_url}&render=true"
+        print("📡 Efetuando requisição via ScraperAPI...", flush=True)
+    else:
+        target_url = category_url
+        print(f"📡 Efetuando requisição direta à URL: {category_url}", flush=True)
+
     try:
-        print(f"📡 Efetuando requisição à URL: {category_url}", flush=True)
-        response = session.get(category_url, timeout=15)
+        response = session.get(target_url, timeout=30)
         print(f"📡 Status HTTP Amazon: {response.status_code}", flush=True)
         
         if response.status_code != 200:
@@ -179,7 +187,6 @@ def scrape_bestsellers_category(category_url, limit=60):
         soup = BeautifulSoup(response.content, "html.parser")
         products = []
         
-        # Procura os cards por vários seletores possíveis
         cards = soup.find_all("div", {"id": re.compile(r"^gridItemRoot")})
         if not cards:
             cards = soup.find_all("div", {"class": re.compile(r"zg-grid-general-faceout")})
