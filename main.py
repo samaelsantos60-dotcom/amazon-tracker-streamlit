@@ -187,31 +187,25 @@ def scrape_bestsellers_category(category_url, limit=60):
         soup = BeautifulSoup(response.content, "html.parser")
         products = []
         
-        cards = soup.find_all("div", {"id": re.compile(r"^gridItemRoot")})
-        if not cards:
-            cards = soup.find_all("div", {"class": re.compile(r"zg-grid-general-faceout")})
-        if not cards:
-            cards = soup.find_all("div", {"class": re.compile(r"p13n-sc-unstructured-line-item")})
-        if not cards:
-            cards = soup.find_all("li", {"class": re.compile(r"zg-item-immersion")})
+        cards = (
+            soup.select("div[id^='gridItemRoot']") or
+            soup.select(".zg-grid-general-faceout") or
+            soup.select(".p13n-sc-unstructured-line-item") or
+            soup.select(".zg-item-immersion") or
+            soup.select("div.p13n-grid-content") or
+            soup.select("li.a-carousel-card")
+        )
 
         print(f"📦 Produtos extraídos da página: {len(cards)}", flush=True)
 
         for rank, card in enumerate(cards[:limit], start=1):
             title = ""
-
             img_elem = card.find("img")
             if img_elem and img_elem.get("alt"):
                 title = img_elem["alt"].strip()
 
             if not title:
-                title_elem = (
-                    card.find("div", {"class": re.compile(r"_cDEbf_title_")})
-                    or card.find("span", {"class": re.compile(r"_cDEbf_title_")})
-                    or card.find("div", {"class": "p13n-sc-css-line-clamp-1"})
-                    or card.find("div", {"class": "p13n-sc-truncate-desktop-type2"})
-                    or card.find("a", {"class": "a-link-normal"})
-                )
+                title_elem = card.select_one("._cDEbf_title_, .p13n-sc-css-line-clamp-1, .p13n-sc-truncate-desktop-type2, a.a-link-normal")
                 if title_elem:
                     title = title_elem.get_text(strip=True)
 
@@ -226,7 +220,7 @@ def scrape_bestsellers_category(category_url, limit=60):
                     if match_img:
                         image_url = match_img.group(1)
 
-            link_elem = card.find("a", {"class": "a-link-normal"})
+            link_elem = card.find("a", {"class": "a-link-normal"}) or card.find("a", href=True)
             href = link_elem["href"] if link_elem and "href" in link_elem.attrs else ""
             clean_url = f"https://www.amazon.es{href}" if href.startswith("/") else href
 
@@ -239,13 +233,7 @@ def scrape_bestsellers_category(category_url, limit=60):
             affiliate_url = f"https://www.amazon.es/dp/{asin}?tag={AFFILIATE_TAG}"
 
             price = None
-            price_elem = (
-                card.find("span", {"class": re.compile(r"_cDEbf_price_")}) 
-                or card.find("span", {"class": "a-color-price"}) 
-                or card.find("span", {"class": "p13n-sc-price"})
-                or card.find("span", {"class": "a-size-base a-color-price"})
-                or card.find("span", {"class": "_cDEbf_price_11U0m"})
-            )
+            price_elem = card.select_one("._cDEbf_price_, .a-color-price, .p13n-sc-price, .a-price .a-offscreen")
             if price_elem:
                 price_text = price_elem.get_text().replace(",", ".").replace("€", "").strip()
                 match = re.search(r"(\d+\.?\d*)", price_text)
