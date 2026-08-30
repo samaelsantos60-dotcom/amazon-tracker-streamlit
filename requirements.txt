@@ -5,4 +5,4 @@ pandas
 plotly
 beautifulsoup4
 python-telegram-bot
-openai
+google-generativeai
